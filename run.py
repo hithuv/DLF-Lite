@@ -8,8 +8,9 @@ from model import BasicLateFusionModel
 from model import LateFusionTransformer
 from model_baseline2 import LateFusionWithCrossModal
 from improved_ortho import LateFusionWithCrossModalOrtho
-from train import train_epoch, train_epoch_ortho
-from eval import eval_epoch, eval_epoch_ortho
+from improved_aux import LateFusionWithCrossModalAuxHeads
+from train import train_epoch, train_epoch_ortho, train_epoch_aux
+from eval import eval_epoch, eval_epoch_ortho, eval_epoch_aux
 import torch.nn.functional as F
 
 class LabelSmoothingCrossEntropy(nn.Module):
@@ -239,6 +240,67 @@ def main3(cfg, data):
     # final save
     torch.save(model.state_dict(), "improved_ortho.pth")
 
+def main4(cfg, data):
+    train_loader, val_loader, test_loader = get_data_loaders(
+        data, cfg.train["batch_size"]
+    )
+
+    # infer dims from one batch
+    sample = next(iter(train_loader))
+    D_text, D_audio, D_vision = (
+        sample["text"].shape[-1],
+        sample["audio"].shape[-1],
+        sample["vision"].shape[-1]
+    )
+
+    # model = BasicLateFusionModel(
+    #     D_text, D_audio, D_vision,
+    #     hidden_dim=cfg.model["hidden_dim"],
+    #     dropout=   cfg.model["dropout"]
+    # ).to(device)
+
+    model = LateFusionWithCrossModalAuxHeads(
+        D_text, D_audio, D_vision,
+        hidden_dim=cfg.model["hidden_dim"],
+        n_heads=   cfg.model["n_heads"],
+        n_layers=  cfg.model["n_layers"],
+        dropout=   cfg.model["dropout"]
+    ).to(device)
+
+    criterion = nn.CrossEntropyLoss()
+    # criterion = LabelSmoothingCrossEntropy(eps=0.1)
+    optimizer = optim.Adam(model.parameters(), lr=cfg.train["lr"])
+    # optimizer = optim.AdamW(
+    #     model.parameters(),
+    #     lr=cfg.train["lr"],
+    #     weight_decay=1e-4
+    # )
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode="min", factor=0.5, patience=2
+    )
+
+    for epoch in range(1, cfg.train["epochs"] + 1):
+        tr_loss, tr_acc = train_epoch_aux(
+            model, train_loader, optimizer, criterion,
+            device, cfg.train["max_grad_norm"]
+        )
+        val_loss, val_acc = eval_epoch_aux(
+            model, val_loader, criterion, device
+        )
+        
+
+        scheduler.step(val_loss)
+        print(f"Epoch {epoch:02d}  "
+              f"train_loss={tr_loss:.4f} train_acc={tr_acc:.4f}  "
+              f"val_loss={val_loss:.4f}   val_acc={val_acc:.4f}")
+
+    te_loss, te_acc = eval_epoch_aux(
+        model, test_loader, criterion, device
+    )
+    print(f"\nTest ▶ loss={te_loss:.4f} acc={te_acc:.4f}")
+    torch.save(model.state_dict(), "baseline2.pth")
+
+
 
 if __name__ == "__main__":
 
@@ -248,6 +310,7 @@ if __name__ == "__main__":
     parser.add_argument('--run1', action='store_true', help='Run the Late Fusion model (baseline1)')
     parser.add_argument('--run2', action='store_true', help='Run the Cross Attention model (baseline2)')
     parser.add_argument('--run3', action='store_true', help='Run the Orthogonality model (improved3)')
+    parser.add_argument('--run4', action='store_true', help='Run the Aux Heads model (improved4)')
     args = parser.parse_args()
 
     cfg = Config(args.config)
@@ -262,3 +325,6 @@ if __name__ == "__main__":
     if args.run3:
         print("Ortho")
         main3(cfg, args.data)
+    if args.run4:
+        print("AuxHeads")
+        main4(cfg, args.data)
