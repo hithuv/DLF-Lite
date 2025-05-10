@@ -2,3 +2,5 @@ env/
 CMU-MultimodelSDK/
 data/
 mosei_data/
+venv*/
+**/**/*.ipynb
