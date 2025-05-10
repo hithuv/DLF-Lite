@@ -71,7 +71,7 @@ def main1():
     #     weight_decay=1e-4
     # )
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", factor=0.5, patience=2, verbose=True
+        optimizer, mode="min", factor=0.5, patience=2
     )
 
     for epoch in range(1, cfg.train["epochs"] + 1):
@@ -152,7 +152,7 @@ def main2():
     #     weight_decay=1e-4
     # )
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", factor=0.5, patience=2, verbose=True
+        optimizer, mode="min", factor=0.5, patience=2
     )
 
     for epoch in range(1, cfg.train["epochs"] + 1):
@@ -227,7 +227,7 @@ def main3():
         weight_decay=cfg.train.get("weight_decay", 1e-4)
     )
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", factor=0.5, patience=2, verbose=True
+        optimizer, mode="min", factor=0.5, patience=2
     )
 
     ortho_weight = cfg.train.get("ortho_weight", 0.1)

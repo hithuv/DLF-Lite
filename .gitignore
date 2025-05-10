@@ -4,3 +4,6 @@ data/
 mosei_data/
 venv*/
 **/**/*.ipynb
+**/**/*.npy
+**/**/*.pth
+.DS_Store
