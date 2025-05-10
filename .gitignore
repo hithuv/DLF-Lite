@@ -7,3 +7,4 @@ venv*/
 **/**/*.npy
 **/**/*.pth
 .DS_Store
+__pycache__/
