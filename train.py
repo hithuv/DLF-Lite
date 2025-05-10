@@ -1,5 +1,6 @@
 import torch
 from torch.nn.utils import clip_grad_norm_
+import torch.nn.functional as F
 
 def train_epoch(model, loader, optimizer, criterion, device, max_grad_norm):
     model.train()
@@ -58,9 +59,12 @@ def train_epoch_ortho(
         cls_loss = criterion(logits, y)
 
         # orthogonality loss: mean of squared dot-products
+        t_feat = F.normalize(t_feat, p=2, dim=1)
+        a_feat = F.normalize(a_feat, p=2, dim=1)
+        v_feat = F.normalize(v_feat, p=2, dim=1)
         dot1        = (t_feat * a_feat).sum(dim=1)  # (B,)
         dot2        = (a_feat * v_feat).sum(dim=1)  # (B,)
-        ortho_loss = ((dot1+dot2) ** 2).mean()              # scalar
+        ortho_loss = ((dot1) ** 2).mean() + ((dot2) ** 2).mean()             # scalar
 
         # total loss
         loss = cls_loss + ortho_weight * ortho_loss
