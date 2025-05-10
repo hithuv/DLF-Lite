@@ -60,7 +60,7 @@ def train_epoch_ortho(
         # orthogonality loss: mean of squared dot-products
         dot1        = (t_feat * a_feat).sum(dim=1)  # (B,)
         dot2        = (a_feat * v_feat).sum(dim=1)  # (B,)
-        ortho_loss = (dot ** 2).mean()              # scalar
+        ortho_loss = ((dot1+dot2) ** 2).mean()              # scalar
 
         # total loss
         loss = cls_loss + ortho_weight * ortho_loss

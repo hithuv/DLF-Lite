@@ -38,7 +38,7 @@ def eval_epoch_ortho(model, loader, criterion, device):
             v = batch["vision"].to(device)
             y = batch["label7"].to(device)
 
-            logits,_,_ = model(t, a, v)
+            logits,_,_,_ = model(t, a, v)
             loss   = criterion(logits, y)
 
             preds = logits.argmax(dim=1)

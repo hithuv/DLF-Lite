@@ -265,6 +265,9 @@ def main3():
 
 
 if __name__ == "__main__":
-    main1()
-    main2()
+    # print("Latefusion")
+    # main1()
+    # print("CrossAttention")
+    # main2()
+    print("Ortho")
     main3()
