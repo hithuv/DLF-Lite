@@ -52,13 +52,14 @@ def train_epoch_ortho(
         y = batch["label7"].to(device)
 
         # forward pass returns (logits, text_feat, av_feat)
-        logits, t_feat, av_feat = model(t, a, v)
+        logits, t_feat, a_feat, v_feat = model(t, a, v)
 
         # classification loss
         cls_loss = criterion(logits, y)
 
         # orthogonality loss: mean of squared dot-products
-        dot       = (t_feat * av_feat).sum(dim=1)  # (B,)
+        dot1        = (t_feat * a_feat).sum(dim=1)  # (B,)
+        dot2        = (a_feat * v_feat).sum(dim=1)  # (B,)
         ortho_loss = (dot ** 2).mean()              # scalar
 
         # total loss

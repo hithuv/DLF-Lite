@@ -136,5 +136,5 @@ class LateFusionWithCrossModalOrtho(nn.Module):
         logits = self.classifier(x)         # (B,7)
 
         # for orthogonality, define combined av feature:
-        av_feat = (a + v) * 0.5             # (B, H)
-        return logits, t, av_feat
+        # av_feat = (a + v) * 0.5             # (B, H)
+        return logits, t, a, v

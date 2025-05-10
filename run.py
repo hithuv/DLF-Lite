@@ -231,7 +231,7 @@ def main3():
         optimizer, mode="min", factor=0.5, patience=2
     )
 
-    ortho_weight = cfg.train.get("ortho_weight", 0.1)
+    ortho_weight = cfg.train.get("ortho_weight", 0.01)
     max_grad_norm = cfg.train.get("max_grad_norm", 1.0)
 
     best_val = float("inf")
