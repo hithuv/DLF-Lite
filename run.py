@@ -220,12 +220,13 @@ def main3():
 
     # classification loss
     criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(model.parameters(), lr=cfg.train["lr"])
     # optimizer with weight decay
-    optimizer = optim.AdamW(
-        model.parameters(),
-        lr=cfg.train["lr"],
-        weight_decay=cfg.train.get("weight_decay", 1e-4)
-    )
+    # optimizer = optim.AdamW(
+    #     model.parameters(),
+    #     lr=cfg.train["lr"],
+    #     weight_decay=cfg.train.get("weight_decay", 1e-4)
+    # )
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min", factor=0.5, patience=2
     )
