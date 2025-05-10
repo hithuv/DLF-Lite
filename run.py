@@ -27,17 +27,9 @@ class LabelSmoothingCrossEntropy(nn.Module):
         return loss.mean() if self.reduction=='mean' else loss.sum()
 
 
-def main1():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="config.json")
-    parser.add_argument("--data",   default="aligned_mosei_dataset.npy")
-    args = parser.parse_args()
-
-    cfg = Config(args.config)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
+def main1(cfg, data):
     train_loader, val_loader, test_loader = get_data_loaders(
-        args.data, cfg.train["batch_size"]
+        data, cfg.train["batch_size"]
     )
 
     # infer dims from one batch
@@ -108,17 +100,9 @@ def main1():
     # print(confusion_matrix(trues, preds))
 
 
-def main2():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="config.json")
-    parser.add_argument("--data",   default="aligned_mosei_dataset.npy")
-    args = parser.parse_args()
-
-    cfg = Config(args.config)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
+def main2(cfg, data):
     train_loader, val_loader, test_loader = get_data_loaders(
-        args.data, cfg.train["batch_size"]
+        data, cfg.train["batch_size"]
     )
 
     # infer dims from one batch
@@ -189,19 +173,11 @@ def main2():
     # from sklearn.metrics import confusion_matrix
     # print(confusion_matrix(trues, preds))
 
-def main3():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="config.json")
-    parser.add_argument("--data",   default="aligned_mosei_dataset.npy")
-    args = parser.parse_args()
-
-    cfg = Config(args.config)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
+def main3(cfg, data):
+    
     train_loader, val_loader, test_loader = get_data_loaders(
-        args.data, cfg.train["batch_size"]
+        data, cfg.train["batch_size"]
     )
-
     # infer dims
     sample = next(iter(train_loader))
     D_text, D_audio, D_vision = (
@@ -265,9 +241,24 @@ def main3():
 
 
 if __name__ == "__main__":
-    # print("Latefusion")
-    # main1()
-    # print("CrossAttention")
-    # main2()
-    print("Ortho")
-    main3()
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", default="config.json")
+    parser.add_argument("--data",   default="aligned_mosei_dataset.npy")
+    parser.add_argument('--run1', action='store_true', help='Run the Late Fusion model (baseline1)')
+    parser.add_argument('--run2', action='store_true', help='Run the Cross Attention model (baseline2)')
+    parser.add_argument('--run3', action='store_true', help='Run the Orthogonality model (improved3)')
+    args = parser.parse_args()
+
+    cfg = Config(args.config)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    if args.run1:
+        print("Latefusion")
+        main1(cfg, args.data)
+    if args.run2:
+        print("CrossAttention")
+        main2(cfg, args.data)
+    if args.run3:
+        print("Ortho")
+        main3(cfg, args.data)
