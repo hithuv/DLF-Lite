@@ -1,23 +1,205 @@
 import argparse
 import torch
 import torch.nn as nn
-from transformers import AdamW, get_linear_schedule_with_warmup
+import torch.optim as optim
 from config import Config
 from utils import get_data_loaders
-from model import LateFusionTransformer7
-from train import train_epoch
-from eval import eval_epoch
+from model import BasicLateFusionModel
+from model import LateFusionTransformer
+from model_baseline2 import LateFusionWithCrossModal
+from improved_ortho import LateFusionWithCrossModalOrtho
+from train import train_epoch, train_epoch_ortho
+from eval import eval_epoch, eval_epoch_ortho
+import torch.nn.functional as F
 
-def main():
-    p = argparse.ArgumentParser()
-    p.add_argument("--config",   default="config.json")
-    p.add_argument("--npy_path", default="aligned_mosei_dataset.npy")
-    args = p.parse_args()
+class LabelSmoothingCrossEntropy(nn.Module):
+    def __init__(self, eps: float = 0.1, reduction='mean'):
+        super().__init__()
+        self.eps = eps
+        self.reduction = reduction
+
+    def forward(self, preds, target):
+        # preds: (B, C), target: (B,)
+        log_preds = F.log_softmax(preds, dim=-1)
+        nll = -log_preds.gather(dim=-1, index=target.unsqueeze(1)).squeeze(1)
+        smooth = -log_preds.mean(dim=-1)
+        loss = (1 - self.eps) * nll + self.eps * smooth
+        return loss.mean() if self.reduction=='mean' else loss.sum()
+
+
+def main1():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", default="config.json")
+    parser.add_argument("--data",   default="aligned_mosei_dataset.npy")
+    args = parser.parse_args()
+
     cfg = Config(args.config)
-
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     train_loader, val_loader, test_loader = get_data_loaders(
-        args.npy_path, cfg.train["batch_size"]
+        args.data, cfg.train["batch_size"]
+    )
+
+    # infer dims from one batch
+    sample = next(iter(train_loader))
+    D_text, D_audio, D_vision = (
+        sample["text"].shape[-1],
+        sample["audio"].shape[-1],
+        sample["vision"].shape[-1]
+    )
+
+    # model = BasicLateFusionModel(
+    #     D_text, D_audio, D_vision,
+    #     hidden_dim=cfg.model["hidden_dim"],
+    #     dropout=   cfg.model["dropout"]
+    # ).to(device)
+
+    model = LateFusionTransformer(
+        D_text, D_audio, D_vision,
+        hidden_dim=cfg.model["hidden_dim"],
+        n_heads=   cfg.model["n_heads"],
+        n_layers=  cfg.model["n_layers"],
+        dropout=   cfg.model["dropout"]
+    ).to(device)
+
+    criterion = nn.CrossEntropyLoss()
+    # criterion = LabelSmoothingCrossEntropy(eps=0.1)
+    optimizer = optim.Adam(model.parameters(), lr=cfg.train["lr"])
+    # optimizer = optim.AdamW(
+    #     model.parameters(),
+    #     lr=cfg.train["lr"],
+    #     weight_decay=1e-4
+    # )
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode="min", factor=0.5, patience=2, verbose=True
+    )
+
+    for epoch in range(1, cfg.train["epochs"] + 1):
+        tr_loss, tr_acc = train_epoch(
+            model, train_loader, optimizer, criterion,
+            device, cfg.train["max_grad_norm"]
+        )
+        val_loss, val_acc = eval_epoch(
+            model, val_loader, criterion, device
+        )
+
+        scheduler.step(val_loss)
+        print(f"Epoch {epoch:02d}  "
+              f"train_loss={tr_loss:.4f} train_acc={tr_acc:.4f}  "
+              f"val_loss={val_loss:.4f}   val_acc={val_acc:.4f}")
+
+    te_loss, te_acc = eval_epoch(
+        model, test_loader, criterion, device
+    )
+    print(f"\nTest ▶ loss={te_loss:.4f} acc={te_acc:.4f}")
+    torch.save(model.state_dict(), "baseline1.pth")
+
+
+
+    # import torch
+    # model.eval()
+    # preds, trues = [], []
+    # with torch.no_grad():
+    #     for t,a,v,y in val_loader:
+    #         ŷ = model(t.to(device),a.to(device),v.to(device)).argmax(1).cpu()
+    #         preds.extend(ŷ.tolist())
+    #         trues.extend(y.tolist())
+    # from sklearn.metrics import confusion_matrix
+    # print(confusion_matrix(trues, preds))
+
+
+def main2():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", default="config.json")
+    parser.add_argument("--data",   default="aligned_mosei_dataset.npy")
+    args = parser.parse_args()
+
+    cfg = Config(args.config)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    train_loader, val_loader, test_loader = get_data_loaders(
+        args.data, cfg.train["batch_size"]
+    )
+
+    # infer dims from one batch
+    sample = next(iter(train_loader))
+    D_text, D_audio, D_vision = (
+        sample["text"].shape[-1],
+        sample["audio"].shape[-1],
+        sample["vision"].shape[-1]
+    )
+
+    # model = BasicLateFusionModel(
+    #     D_text, D_audio, D_vision,
+    #     hidden_dim=cfg.model["hidden_dim"],
+    #     dropout=   cfg.model["dropout"]
+    # ).to(device)
+
+    model = LateFusionWithCrossModal(
+        D_text, D_audio, D_vision,
+        hidden_dim=cfg.model["hidden_dim"],
+        n_heads=   cfg.model["n_heads"],
+        n_layers=  cfg.model["n_layers"],
+        dropout=   cfg.model["dropout"]
+    ).to(device)
+
+    criterion = nn.CrossEntropyLoss()
+    # criterion = LabelSmoothingCrossEntropy(eps=0.1)
+    optimizer = optim.Adam(model.parameters(), lr=cfg.train["lr"])
+    # optimizer = optim.AdamW(
+    #     model.parameters(),
+    #     lr=cfg.train["lr"],
+    #     weight_decay=1e-4
+    # )
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode="min", factor=0.5, patience=2, verbose=True
+    )
+
+    for epoch in range(1, cfg.train["epochs"] + 1):
+        tr_loss, tr_acc = train_epoch(
+            model, train_loader, optimizer, criterion,
+            device, cfg.train["max_grad_norm"]
+        )
+        val_loss, val_acc = eval_epoch(
+            model, val_loader, criterion, device
+        )
+        
+
+        scheduler.step(val_loss)
+        print(f"Epoch {epoch:02d}  "
+              f"train_loss={tr_loss:.4f} train_acc={tr_acc:.4f}  "
+              f"val_loss={val_loss:.4f}   val_acc={val_acc:.4f}")
+
+    te_loss, te_acc = eval_epoch(
+        model, test_loader, criterion, device
+    )
+    print(f"\nTest ▶ loss={te_loss:.4f} acc={te_acc:.4f}")
+    torch.save(model.state_dict(), "baseline2.pth")
+
+
+
+    # import torch
+    # model.eval()
+    # preds, trues = [], []
+    # with torch.no_grad():
+    #     for t,a,v,y in val_loader:
+    #         ŷ = model(t.to(device),a.to(device),v.to(device)).argmax(1).cpu()
+    #         preds.extend(ŷ.tolist())
+    #         trues.extend(y.tolist())
+    # from sklearn.metrics import confusion_matrix
+    # print(confusion_matrix(trues, preds))
+
+def main3():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", default="config.json")
+    parser.add_argument("--data",   default="aligned_mosei_dataset.npy")
+    args = parser.parse_args()
+
+    cfg = Config(args.config)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    train_loader, val_loader, test_loader = get_data_loaders(
+        args.data, cfg.train["batch_size"]
     )
 
     # infer dims
@@ -28,45 +210,60 @@ def main():
         sample["vision"].shape[-1]
     )
 
-    model = LateFusionTransformer7(
+    model = LateFusionWithCrossModalOrtho(
         D_text, D_audio, D_vision,
         hidden_dim=cfg.model["hidden_dim"],
-        n_heads=cfg.model["n_heads"],
-        n_layers=cfg.model["n_layers"],
-        dropout=cfg.model["dropout"]
+        n_heads=   cfg.model["n_heads"],
+        n_layers=  cfg.model["n_layers"],
+        dropout=   cfg.model["dropout"]
     ).to(device)
 
-    total_steps = len(train_loader) * cfg.train["epochs"]
-    optimizer = AdamW(
+    # classification loss
+    criterion = nn.CrossEntropyLoss()
+    # optimizer with weight decay
+    optimizer = optim.AdamW(
         model.parameters(),
         lr=cfg.train["lr"],
-        weight_decay=cfg.train["weight_decay"]
+        weight_decay=cfg.train.get("weight_decay", 1e-4)
     )
-    scheduler = get_linear_schedule_with_warmup(
-        optimizer,
-        num_warmup_steps=int(cfg.train["warmup_ratio"] * total_steps),
-        num_training_steps=total_steps
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode="min", factor=0.5, patience=2, verbose=True
     )
-    criterion = nn.CrossEntropyLoss()
+
+    ortho_weight = cfg.train.get("ortho_weight", 0.1)
+    max_grad_norm = cfg.train.get("max_grad_norm", 1.0)
 
     best_val = float("inf")
     for epoch in range(1, cfg.train["epochs"] + 1):
-        tr_loss, tr_acc = train_epoch(
-            model, train_loader, optimizer, scheduler,
-            criterion, cfg.train["max_grad_norm"], device
+        tr_loss, tr_acc = train_epoch_ortho(
+            model, train_loader, optimizer, criterion,
+            device, ortho_weight, max_grad_norm
         )
-        val_loss, val_acc = eval_epoch(model, val_loader, criterion, device)
+        val_loss, val_acc = eval_epoch_ortho(
+            model, val_loader, criterion, device
+        )
+
+        scheduler.step(val_loss)
+
         print(f"Epoch {epoch:02d}  "
               f"train_loss={tr_loss:.4f} train_acc={tr_acc:.4f}  "
-              f"val_loss={val_loss:.4f} val_acc={val_acc:.4f}")
+              f"val_loss={val_loss:.4f}   val_acc={val_acc:.4f}")
+
         if val_loss < best_val:
             best_val = val_loss
-            torch.save(model.state_dict(), "best_model.pt")
+            torch.save(model.state_dict(), "improved_ortho.pth")
+            # print("  ↳ Saved new best model")
 
-    # final test
-    model.load_state_dict(torch.load("best_model.pt"))
-    te_loss, te_acc = eval_epoch(model, test_loader, criterion, device)
+    te_loss, te_acc = eval_epoch_ortho(
+        model, test_loader, criterion, device
+    )
     print(f"\nTest ▶ loss={te_loss:.4f} acc={te_acc:.4f}")
 
+    # final save
+    torch.save(model.state_dict(), "improved_ortho.pth")
+
+
 if __name__ == "__main__":
-    main()
+    main1()
+    main2()
+    main3()

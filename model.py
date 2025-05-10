@@ -1,7 +1,185 @@
 import torch
 import torch.nn as nn
+import math
 
-class LateFusionTransformer7(nn.Module):
+class BasicLateFusionModel(nn.Module):
+    """
+    Mean-pool each modality → small MLP per modality → concatenate → MLP classifier
+    """
+    def __init__(
+        self,
+        D_text:   int,
+        D_audio:  int,
+        D_vision: int,
+        hidden_dim: int = 64,
+        dropout:    float = 0.1
+    ):
+        super().__init__()
+        self.text_proj = nn.Sequential(
+            nn.Linear(D_text, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout)
+        )
+        self.audio_proj = nn.Sequential(
+            nn.Linear(D_audio, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout)
+        )
+        self.vision_proj = nn.Sequential(
+            nn.Linear(D_vision, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout)
+        )
+        self.classifier = nn.Sequential(
+            nn.Linear(hidden_dim * 3, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, 7)
+        )
+
+    def forward(self, text, audio, vision):
+        # text/audio/vision: (B, T, D)
+        t = text.mean(dim=1)    # (B, D_text)
+        a = audio.mean(dim=1)   # (B, D_audio)
+        v = vision.mean(dim=1)  # (B, D_vision)
+        t = self.text_proj(t)   # (B, H)
+        a = self.audio_proj(a)  # (B, H)
+        v = self.vision_proj(v) # (B, H)
+        x = torch.cat([t, a, v], dim=1)  # (B, 3H)
+        return self.classifier(x)        # (B, 7)
+
+
+class LateFusionTransformerOld(nn.Module):
+    """
+    Late-fusion Transformer for 7-way classification:
+      1) mean-pool each modality → project to hidden_dim
+      2) stack as 3 tokens → TransformerEncoder
+      3) mean-pool tokens → MLP classifier
+    """
+    def __init__(
+        self,
+        D_text:   int,
+        D_audio:  int,
+        D_vision: int,
+        hidden_dim: int = 64,
+        n_heads:    int = 4,
+        n_layers:   int = 2,
+        dropout:  float = 0.1
+    ):
+        super().__init__()
+        # per-modality projections
+        self.text_proj   = nn.Sequential(
+            nn.Linear(D_text, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout)
+        )
+        self.audio_proj  = nn.Sequential(
+            nn.Linear(D_audio, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout)
+        )
+        self.vision_proj = nn.Sequential(
+            nn.Linear(D_vision, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout)
+        )
+
+        # Transformer fusion
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=hidden_dim,
+            nhead=n_heads,
+            dim_feedforward=hidden_dim*2,
+            dropout=dropout,
+            activation="relu",
+            batch_first=True
+        )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
+
+        # classifier head
+        self.classifier = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, 7)
+        )
+
+    def forward(self, text, audio, vision):
+        # mean-pool time
+        t = text.mean(dim=1)    # (B, D_text)
+        a = audio.mean(dim=1)   # (B, D_audio)
+        v = vision.mean(dim=1)  # (B, D_vision)
+
+        # project to hidden_dim
+        t = self.text_proj(t)   # (B, H)
+        a = self.audio_proj(a)
+        v = self.vision_proj(v)
+
+        # stack tokens
+        x = torch.stack([t, a, v], dim=1)  # (B,3,H)
+
+        # fuse via Transformer
+        fused = self.transformer(x)        # (B,3,H)
+
+        # pool tokens
+        pooled = fused.mean(dim=1)         # (B, H)
+
+        # classify
+        return self.classifier(pooled)     # (B,7)
+
+class PositionalEncoding(nn.Module):
+    def __init__(self, hidden_dim: int, max_len: int = 50):
+        super().__init__()
+        pe = torch.zeros(max_len, hidden_dim)
+        pos = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div = torch.exp(torch.arange(0, hidden_dim, 2).float() *
+                        (-math.log(10000.0) / hidden_dim))
+        pe[:, 0::2] = torch.sin(pos * div)
+        pe[:, 1::2] = torch.cos(pos * div)
+        self.register_buffer("pe", pe)  # (max_len, hidden_dim)
+
+    def forward(self, x: torch.Tensor):
+        # x: (B, T, hidden_dim)
+        return x + self.pe[: x.size(1)]
+
+
+class ModalityTransformer(nn.Module):
+    def __init__(
+        self,
+        in_dim: int,
+        hidden_dim: int,
+        n_heads: int,
+        n_layers: int,
+        dropout: float,
+        max_len: int = 50,
+    ):
+        super().__init__()
+        # 1) token embedding
+        self.input_proj = nn.Linear(in_dim, hidden_dim)
+        # 2) positional encoding
+        self.pos_enc = PositionalEncoding(hidden_dim, max_len)
+        # 3) transformer encoder
+        layer = nn.TransformerEncoderLayer(
+            d_model=hidden_dim,
+            nhead=n_heads,
+            dim_feedforward=hidden_dim * 2,
+            dropout=dropout,
+            activation="relu",
+            batch_first=True,
+        )
+        self.encoder = nn.TransformerEncoder(layer, num_layers=n_layers)
+
+    def forward(self, x: torch.Tensor):
+        # x: (B, T, in_dim)
+        h = self.input_proj(x)     # (B, T, H)
+        h = self.pos_enc(h)        # add positional
+        h = self.encoder(h)        # (B, T, H)
+        return h.mean(dim=1)       # (B, H)
+
+
+
+
+
+class LateFusionTransformer(nn.Module):
     def __init__(
         self,
         D_text: int,
@@ -10,64 +188,65 @@ class LateFusionTransformer7(nn.Module):
         hidden_dim: int = 128,
         n_heads: int = 4,
         n_layers: int = 2,
-        dropout: float = 0.2
+        dropout: float = 0.1,
     ):
         super().__init__()
-        # Project each modality
-        self.text_enc = nn.Sequential(
-            nn.Linear(D_text, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim)
+        # per-modality transformers
+        self.text_enc = ModalityTransformer(
+            D_text, hidden_dim, n_heads, n_layers, dropout, max_len=50
         )
-        self.audio_enc = nn.Sequential(
-            nn.Linear(D_audio, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim)
+        self.audio_enc = ModalityTransformer(
+            D_audio, hidden_dim, n_heads, n_layers, dropout, max_len=50
         )
-        self.vision_enc = nn.Sequential(
-            nn.Linear(D_vision, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim)
+        self.vision_enc = ModalityTransformer(
+            D_vision, hidden_dim, n_heads, n_layers, dropout, max_len=50
         )
 
-        # Norm + dropout per token
-        self.text_norm   = nn.Sequential(nn.LayerNorm(hidden_dim), nn.Dropout(dropout))
-        self.audio_norm  = nn.Sequential(nn.LayerNorm(hidden_dim), nn.Dropout(dropout))
-        self.vision_norm = nn.Sequential(nn.LayerNorm(hidden_dim), nn.Dropout(dropout))
+        # learned modality embeddings for late fusion
+        self.modality_tokens = nn.Parameter(torch.randn(3, hidden_dim))
 
-        # Transformer fusion (batch_first, smaller FFN)
-        encoder_layer = nn.TransformerEncoderLayer(
+        # late-fusion transformer (3 tokens)
+        fuse_layer = nn.TransformerEncoderLayer(
             d_model=hidden_dim,
             nhead=n_heads,
             dim_feedforward=hidden_dim * 2,
             dropout=dropout,
             activation="relu",
-            batch_first=True
+            batch_first=True,
         )
-        self.fusion = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
+        self.fusion = nn.TransformerEncoder(fuse_layer, num_layers=n_layers)
 
-        # 7-way classification head
-        self.class7 = nn.Sequential(
-            nn.LayerNorm(hidden_dim),
+        # classification head
+        self.classifier = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim, 7)
+            nn.Linear(hidden_dim, 7),
         )
 
-    def forward(self, x_text, x_audio, x_vision):
-        # Mean-pool time dimension
-        t = x_text.mean(dim=1)
-        a = x_audio.mean(dim=1)
-        v = x_vision.mean(dim=1)
+    def forward(self, text, audio, vision):
+        """
+        Args:
+          text:  (B, 50, D_text)
+          audio: (B, 50, D_audio)
+          vision:(B, 50, D_vision)
+        Returns:
+          logits: (B, 7)
+        """
+        # 1) per-modality encoding
+        t = self.text_enc(text)       # (B, H)
+        a = self.audio_enc(audio)     # (B, H)
+        v = self.vision_enc(vision)   # (B, H)
 
-        # Encode each
-        t = self.text_norm(self.text_enc(t))
-        a = self.audio_norm(self.audio_enc(a))
-        v = self.vision_norm(self.vision_enc(v))
+        # 2) add modality token embeddings
+        t = t + self.modality_tokens[0]
+        a = a + self.modality_tokens[1]
+        v = v + self.modality_tokens[2]
 
-        # Stack tokens and fuse
-        x = torch.stack([t, a, v], dim=1)  # (B,3,H)
-        fused = self.fusion(x)             # (B,3,H)
+        # 3) stack and fuse
+        x = torch.stack([t, a, v], dim=1)  # (B, 3, H)
+        fused = self.fusion(x)             # (B, 3, H)
 
-        # Pool and classify
-        pooled = fused.mean(dim=1)         # (B,H)
-        return self.class7(pooled)         # (B,7)
+        # 4) pool and classify
+        pooled = fused.mean(dim=1)         # (B, H)
+        return self.classifier(pooled)     # (B, 7)

@@ -1,30 +1,80 @@
 import torch
 from torch.nn.utils import clip_grad_norm_
 
-def train_epoch(model, loader, optimizer, scheduler,
-                criterion, max_grad_norm, device):
+def train_epoch(model, loader, optimizer, criterion, device, max_grad_norm):
     model.train()
-    total_loss = total_correct = 0
-    n_samples = 0
+    total_loss = 0.0
+    total_acc  = 0
+    n_samples  = 0
 
     for batch in loader:
+        t = batch["text"].to(device)
+        a = batch["audio"].to(device)
+        v = batch["vision"].to(device)
+        y = batch["label7"].to(device)
+
+        logits = model(t, a, v)
+        loss   = criterion(logits, y)
+
         optimizer.zero_grad()
-        x_t = batch["text"].to(device)
-        x_a = batch["audio"].to(device)
-        x_v = batch["vision"].to(device)
-        y7  = batch["label7"].to(device)
+        loss.backward()
+        optimizer.step()
 
-        logits = model(x_t, x_a, x_v)
-        loss = criterion(logits, y7)
+        preds = logits.argmax(dim=1)
+        bs = y.size(0)
+        total_loss += loss.item() * bs
+        total_acc  += (preds == y).sum().item()
+        n_samples  += bs
 
+    return total_loss / n_samples, total_acc / n_samples
+
+
+
+def train_epoch_ortho(
+    model,
+    loader,
+    optimizer,
+    criterion,
+    device,
+    ortho_weight: float = 0.1,
+    max_grad_norm: float = 1.0
+):
+    model.train()
+    total_loss = 0.0
+    total_acc  = 0
+    n_samples  = 0
+
+    for batch in loader:
+        # unpack batch
+        t = batch["text"].to(device)
+        a = batch["audio"].to(device)
+        v = batch["vision"].to(device)
+        y = batch["label7"].to(device)
+
+        # forward pass returns (logits, text_feat, av_feat)
+        logits, t_feat, av_feat = model(t, a, v)
+
+        # classification loss
+        cls_loss = criterion(logits, y)
+
+        # orthogonality loss: mean of squared dot-products
+        dot       = (t_feat * av_feat).sum(dim=1)  # (B,)
+        ortho_loss = (dot ** 2).mean()              # scalar
+
+        # total loss
+        loss = cls_loss + ortho_weight * ortho_loss
+
+        # backward + clip + step
+        optimizer.zero_grad()
         loss.backward()
         clip_grad_norm_(model.parameters(), max_grad_norm)
         optimizer.step()
-        scheduler.step()
 
-        bs = x_t.size(0)
-        total_loss    += loss.item() * bs
-        total_correct += (logits.argmax(1) == y7).sum().item()
-        n_samples     += bs
+        # metrics
+        preds = logits.argmax(dim=1)
+        bs    = y.size(0)
+        total_loss += loss.item() * bs
+        total_acc  += (preds == y).sum().item()
+        n_samples  += bs
 
-    return total_loss / n_samples, total_correct / n_samples
+    return total_loss / n_samples, total_acc / n_samples
