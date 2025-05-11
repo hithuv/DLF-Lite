@@ -379,7 +379,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="config.json")
-    parser.add_argument("--data",   default="aligned_mosei_dataset.npy")
+    parser.add_argument("--data",   default="data/aligned_mosei_dataset.npy")
     parser.add_argument('--run1', action='store_true', help='Run the Late Fusion model (baseline1)')
     parser.add_argument('--run2', action='store_true', help='Run the Cross Attention model (baseline2)')
     parser.add_argument('--run3', action='store_true', help='Run the Orthogonality model (improved3)')
