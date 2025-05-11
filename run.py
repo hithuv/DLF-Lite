@@ -339,7 +339,7 @@ def main4(cfg, data):
     for epoch in range(1, cfg.train["epochs"] + 1):
         tr_loss, tr_acc, text_l, audio_l, video_l = train_epoch_aux(
             model, train_loader, optimizer, criterion,
-            device, cfg.train["max_grad_norm"]
+            device, cfg.train["aux_weight"], cfg.train["max_grad_norm"]
         )
         val_loss, val_acc = eval_epoch_aux(
             model, val_loader, criterion, device

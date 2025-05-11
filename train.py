@@ -85,7 +85,7 @@ def train_epoch_ortho(model, loader, optimizer, criterion, device, ortho_weight:
     return total_loss / n_samples, total_acc / n_samples, avg_ortho_loss * ortho_weight
 
 
-def train_epoch_aux(model, loader, optimizer, criterion, device, max_grad_norm):
+def train_epoch_aux(model, loader, optimizer, criterion, device, aux_weight: float = 0.05, max_grad_norm: float = 1.0):
     model.train()
     total_loss = 0.0
     loss_text_sum = 0.0
@@ -106,7 +106,7 @@ def train_epoch_aux(model, loader, optimizer, criterion, device, max_grad_norm):
         loss_audio = criterion(logits_audio, y)
         loss_video = criterion(logits_video, y)
         # Combine losses
-        loss = loss + 0.2 * (loss_text + loss_audio + loss_video)
+        loss = loss + aux_weight * (loss_text + loss_audio + loss_video)
 
         optimizer.zero_grad()
         loss.backward()
