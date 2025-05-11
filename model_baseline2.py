@@ -99,7 +99,7 @@ class LateFusionWithCrossModal(nn.Module):
             nn.Linear(hidden_dim * 3, hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim, 7),
+            nn.Linear(hidden_dim, 3),
         )
 
     def forward(self, text, audio, vision):
