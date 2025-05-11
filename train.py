@@ -37,7 +37,7 @@ def train_epoch_ortho(model, loader, optimizer, criterion, device, ortho_weight:
     total_loss = 0.0
     total_acc  = 0
     n_samples  = 0
-    ortho_loss_avg = 0.0
+    ortho_loss_sum = 0.0
 
     for batch in loader:
         # unpack batch
@@ -75,18 +75,22 @@ def train_epoch_ortho(model, loader, optimizer, criterion, device, ortho_weight:
         preds = logits.argmax(dim=1)
         bs = y.size(0)
         total_loss += loss.item() * bs
-        ortho_loss_avg += ortho_loss * bs
+        ortho_loss_sum += ortho_loss.item() * bs
         total_acc += (preds == y).sum().item()
         n_samples += bs
 
-    print(f'ortho_loss = {(ortho_loss_avg/n_samples)*ortho_weight}')
+    print(f'ortho_loss = {(ortho_loss_sum/n_samples)*ortho_weight}')
+    avg_ortho_loss = ortho_loss_sum/n_samples
 
-    return total_loss / n_samples, total_acc / n_samples
+    return total_loss / n_samples, total_acc / n_samples, avg_ortho_loss * ortho_weight
 
 
 def train_epoch_aux(model, loader, optimizer, criterion, device, max_grad_norm):
     model.train()
     total_loss = 0.0
+    loss_text_sum = 0.0
+    loss_audio_sum = 0.0
+    loss_video_sum = 0.0
     total_acc  = 0
     n_samples  = 0
 
@@ -112,7 +116,14 @@ def train_epoch_aux(model, loader, optimizer, criterion, device, max_grad_norm):
         preds = logits.argmax(dim=1)
         bs = y.size(0)
         total_loss += loss.item() * bs
+        loss_text_sum += loss_text.item() * bs
+        loss_audio_sum += loss_audio.item() * bs
+        loss_video_sum += loss_video.item() * bs
         total_acc  += (preds == y).sum().item()
         n_samples  += bs
 
-    return total_loss / n_samples, total_acc / n_samples
+    avg_text = loss_text_sum / n_samples
+    avg_audio = loss_audio_sum / n_samples
+    avg_video = loss_video_sum / n_samples
+
+    return total_loss / n_samples, total_acc / n_samples, avg_text, avg_audio, avg_video

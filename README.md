@@ -68,6 +68,7 @@ To download and prepare the dataset for the project, there are 2 ways:
     - `cmumosei_raw`
     - `word_aligned_highlevel`
     - `final_aligned` (this contains the final processed data)
+    
     ```bash
     python process_mosei.py
     ```

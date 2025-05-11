@@ -4,7 +4,6 @@ import torch.nn as nn
 import torch.optim as optim
 from config import Config
 from utils import get_data_loaders
-from model import BasicLateFusionModel
 from model import LateFusionTransformer
 from model_baseline2 import LateFusionWithCrossModal
 from improved_ortho import LateFusionWithCrossModalOrtho
@@ -12,6 +11,7 @@ from improved_aux import LateFusionWithCrossModalAuxHeads
 from train import train_epoch, train_epoch_ortho, train_epoch_aux
 from eval import eval_epoch, eval_epoch_ortho, eval_epoch_aux
 import torch.nn.functional as F
+import pandas as pd
 
 class LabelSmoothingCrossEntropy(nn.Module):
     def __init__(self, eps: float = 0.1, reduction='mean'):
@@ -27,6 +27,8 @@ class LabelSmoothingCrossEntropy(nn.Module):
         loss = (1 - self.eps) * nll + self.eps * smooth
         return loss.mean() if self.reduction=='mean' else loss.sum()
 
+def dump_csv(metrics, fname):
+    pd.DataFrame(metrics).to_csv(fname, index=False)
 
 def main1(cfg, data):
     train_loader, val_loader, test_loader = get_data_loaders(
@@ -67,6 +69,7 @@ def main1(cfg, data):
         optimizer, mode="min", factor=0.5, patience=2
     )
 
+    out = []
     for epoch in range(1, cfg.train["epochs"] + 1):
         tr_loss, tr_acc = train_epoch(
             model, train_loader, optimizer, criterion,
@@ -75,6 +78,19 @@ def main1(cfg, data):
         val_loss, val_acc = eval_epoch(
             model, val_loader, criterion, device
         )
+        te_loss, te_acc = eval_epoch(
+            model, test_loader, criterion, device
+        )
+
+        out.append({
+          "epoch": epoch,
+          "train_loss": tr_loss,
+          "train_acc":  tr_acc,
+          "val_loss":   val_loss,
+          "val_acc":    val_acc,
+          "test_loss": te_loss,
+          "test_acc": te_acc
+        })
 
         scheduler.step(val_loss)
         print(f"Epoch {epoch:02d}  "
@@ -85,7 +101,8 @@ def main1(cfg, data):
         model, test_loader, criterion, device
     )
     print(f"\nTest ▶ loss={te_loss:.4f} acc={te_acc:.4f}")
-    torch.save(model.state_dict(), "baseline1.pth")
+    torch.save(model.state_dict(), "models/baseline1.pth")
+    dump_csv(out, "csv/baseline1_metrics.csv")
 
 
 
@@ -140,6 +157,7 @@ def main2(cfg, data):
         optimizer, mode="min", factor=0.5, patience=2
     )
 
+    out = []
     for epoch in range(1, cfg.train["epochs"] + 1):
         tr_loss, tr_acc = train_epoch(
             model, train_loader, optimizer, criterion,
@@ -149,6 +167,19 @@ def main2(cfg, data):
             model, val_loader, criterion, device
         )
         
+        te_loss, te_acc = eval_epoch(
+            model, test_loader, criterion, device
+        )
+
+        out.append({
+          "epoch": epoch,
+          "train_loss": tr_loss,
+          "train_acc":  tr_acc,
+          "val_loss":   val_loss,
+          "val_acc":    val_acc,
+          "test_loss": te_loss,
+          "test_acc": te_acc
+        })
 
         scheduler.step(val_loss)
         print(f"Epoch {epoch:02d}  "
@@ -159,7 +190,8 @@ def main2(cfg, data):
         model, test_loader, criterion, device
     )
     print(f"\nTest ▶ loss={te_loss:.4f} acc={te_acc:.4f}")
-    torch.save(model.state_dict(), "baseline2.pth")
+    torch.save(model.state_dict(), "models/baseline2.pth")
+    dump_csv(out, "csv/baseline2_metrics.csv")
 
 
 
@@ -211,9 +243,12 @@ def main3(cfg, data):
     ortho_weight = cfg.train.get("ortho_weight", 0.01)
     max_grad_norm = cfg.train.get("max_grad_norm", 1.0)
 
+    print(f'Ortho Weight = {ortho_weight}')
+
     best_val = float("inf")
+    out = []
     for epoch in range(1, cfg.train["epochs"] + 1):
-        tr_loss, tr_acc = train_epoch_ortho(
+        tr_loss, tr_acc, ortho = train_epoch_ortho(
             model, train_loader, optimizer, criterion,
             device, ortho_weight, max_grad_norm
         )
@@ -221,16 +256,36 @@ def main3(cfg, data):
             model, val_loader, criterion, device
         )
 
+        te_loss, te_acc = eval_epoch_ortho(
+            model, test_loader, criterion, device
+        )
+
+        out.append({
+          "epoch": epoch,
+          "train_loss": tr_loss,
+          "train_acc":  tr_acc,
+          "ortho_loss":  ortho,
+          "val_loss":   val_loss,
+          "val_acc":    val_acc,
+          "test_loss": te_loss,
+          "test_acc": te_acc
+        })
+
         scheduler.step(val_loss)
 
         print(f"Epoch {epoch:02d}  "
               f"train_loss={tr_loss:.4f} train_acc={tr_acc:.4f}  "
               f"val_loss={val_loss:.4f}   val_acc={val_acc:.4f}")
 
-        if val_loss < best_val:
-            best_val = val_loss
-            torch.save(model.state_dict(), "improved_ortho.pth")
+        # if val_loss < best_val:
+        #     best_val = val_loss
+        #     torch.save(model.state_dict(), "improved_ortho.pth")
             # print("  ↳ Saved new best model")
+
+        te_loss, te_acc = eval_epoch_ortho(
+            model, test_loader, criterion, device
+        )
+        print(f"\nTest loss={te_loss:.4f} acc={te_acc:.4f}")
 
     te_loss, te_acc = eval_epoch_ortho(
         model, test_loader, criterion, device
@@ -238,7 +293,8 @@ def main3(cfg, data):
     print(f"\nTest ▶ loss={te_loss:.4f} acc={te_acc:.4f}")
 
     # final save
-    torch.save(model.state_dict(), "improved_ortho.pth")
+    torch.save(model.state_dict(), "models/improved_ortho.pth")
+    dump_csv(out, "csv/ortho_metrics.csv")
 
 def main4(cfg, data):
     train_loader, val_loader, test_loader = get_data_loaders(
@@ -279,8 +335,9 @@ def main4(cfg, data):
         optimizer, mode="min", factor=0.5, patience=2
     )
 
+    out = []
     for epoch in range(1, cfg.train["epochs"] + 1):
-        tr_loss, tr_acc = train_epoch_aux(
+        tr_loss, tr_acc, text_l, audio_l, video_l = train_epoch_aux(
             model, train_loader, optimizer, criterion,
             device, cfg.train["max_grad_norm"]
         )
@@ -288,6 +345,21 @@ def main4(cfg, data):
             model, val_loader, criterion, device
         )
         
+        te_loss, te_acc = eval_epoch_aux(
+            model, test_loader, criterion, device
+        )
+        out.append({
+          "epoch":         epoch,
+          "train_loss":    tr_loss,
+          "train_acc":     tr_acc,
+          "aux_text_loss": text_l,
+          "aux_audio_loss":audio_l,
+          "aux_video_loss":video_l,
+          "val_loss":      val_loss,
+          "val_acc":       val_acc,
+          "test_loss": te_loss,
+          "test_acc": te_acc
+        })
 
         scheduler.step(val_loss)
         print(f"Epoch {epoch:02d}  "
@@ -298,7 +370,8 @@ def main4(cfg, data):
         model, test_loader, criterion, device
     )
     print(f"\nTest ▶ loss={te_loss:.4f} acc={te_acc:.4f}")
-    torch.save(model.state_dict(), "baseline2.pth")
+    torch.save(model.state_dict(), "models/improved_aux.pth")
+    dump_csv(out, "csv/aux_metrics.csv")
 
 
 
